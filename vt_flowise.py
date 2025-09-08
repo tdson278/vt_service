@@ -4,10 +4,13 @@ from pydantic import BaseModel, Field
 import requests, os, asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="VirusTotalService", version="1.1")
+app = FastAPI(title="VirusTotalService", version="1.2")
 
-# ----- Load API key -----
-VIRUSTOTAL_API_KEY = "d902757ed7506de13ae9cb14d8edbaf9ba1d681b71885d7d4e533ee6164da606"
+# ----- Load API key từ biến môi trường -----
+VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+if not VIRUSTOTAL_API_KEY:
+    raise RuntimeError("Missing VirusTotal API key. Set the VIRUSTOTAL_API_KEY environment variable.")
+
 VT_BASE_URL = "https://www.virustotal.com/api/v3"
 
 # ----- Request model -----
@@ -26,9 +29,6 @@ async def virustotal_lookup(req: VTRequest):
 
     if not req.confirm:
         raise HTTPException(status_code=400, detail="Set confirm=true to authorize VirusTotal query.")
-
-    if not VIRUSTOTAL_API_KEY:
-        raise HTTPException(status_code=500, detail="Missing VirusTotal API key")
 
     now = datetime.utcnow()
     # Nếu request trước đó chưa quá 2 phút, chờ
