@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 import requests, os, asyncio
 from datetime import datetime, timedelta
 
-app = FastAPI(title="VirusTotalService", version="1.2")
+app = FastAPI(title="VirusTotalService", version="1.3")
 
 # ----- Load API key từ biến môi trường -----
 VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
@@ -38,29 +38,42 @@ async def virustotal_lookup(req: VTRequest):
 
     # Cập nhật timestamp lần request mới
     last_request_time = datetime.utcnow()
-
-    headers = {"x-apikey": VIRUSTOTAL_API_KEY}
     started = datetime.utcnow().isoformat() + "Z"
+    headers = {"x-apikey": VIRUSTOTAL_API_KEY}
 
     try:
         if req.target.startswith("http://") or req.target.startswith("https://"):
             # URL scan
             vt_url = f"{VT_BASE_URL}/urls"
-            resp = requests.post(vt_url, headers=headers, data={"url": req.target})
-            resp.raise_for_status()
-            scan_id = resp.json().get("data", {}).get("id")
+            post_resp = requests.post(vt_url, headers=headers, data={"url": req.target})
+            post_resp.raise_for_status()
+            scan_id = post_resp.json().get("data", {}).get("id")
             if not scan_id:
                 raise HTTPException(status_code=500, detail="Failed to get scan ID from VirusTotal")
-            # Get report
-            report_resp = requests.get(f"{VT_BASE_URL}/analyses/{scan_id}", headers=headers)
-            report_resp.raise_for_status()
-            result = report_resp.json()
+
+            # Polling kết quả nếu status là queued
+            max_retries = 5
+            attempt = 0
+            while attempt < max_retries:
+                report_resp = requests.get(f"{VT_BASE_URL}/analyses/{scan_id}", headers=headers)
+                report_resp.raise_for_status()
+                result = report_resp.json()
+                status = result.get("data", {}).get("attributes", {}).get("status")
+                if status != "queued":
+                    break
+                # Nếu vẫn queued, chờ 2 phút
+                attempt += 1
+                await asyncio.sleep(120)
+            else:
+                raise HTTPException(status_code=504, detail="VirusTotal analysis still queued after retries.")
+
         else:
             # IP lookup
             vt_url = f"{VT_BASE_URL}/ip_addresses/{req.target}"
             resp = requests.get(vt_url, headers=headers)
             resp.raise_for_status()
             result = resp.json()
+
     except requests.RequestException as e:
         raise HTTPException(status_code=500, detail=str(e))
 
